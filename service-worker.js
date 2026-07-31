@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rutina-v2';
+const CACHE_NAME = 'rutina-v4';
 const ASSETS = [
   './',
   './index.html',
