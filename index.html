@@ -6,7 +6,6 @@
 <title>Rutina</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
-<script src="chart.min.js"></script>
 <style>
   * { box-sizing: border-box; margin:0; padding:0; -webkit-tap-highlight-color: transparent; user-select:none; }
   html, body { height:100%; background:#000; color:#fff; font-family: 'Segoe UI', Arial, sans-serif; overflow:hidden; }
@@ -39,15 +38,29 @@
   #stepCounter { position:fixed; top:15px; right:20px; font-size: clamp(12px,2.5vw,22px); color:#666; text-align:right; }
   #totalTimer { position:fixed; top:15px; left:20px; font-size: clamp(12px,2.5vw,22px); color:#0f0; text-align:left; }
 
-  #chartScreen { flex-direction:column; padding:20px; justify-content:flex-start; }
-  #chartContainer { position:relative; width:100%; max-width:1000px; height:70vh; margin: 0 auto; }
-  #chartCanvas { width:100% !important; height:100% !important; }
+  #chartScreen { flex-direction:column; padding:20px; justify-content:flex-start; overflow-y:auto; }
+  #tableWrap { width:100%; max-width:1100px; margin:0 auto; overflow-x:auto; }
+  #progressTable { width:100%; border-collapse:collapse; font-size: clamp(13px,1.8vw,20px); }
+  #progressTable th, #progressTable td { border:1px solid #333; padding:1.4vh 1vw; text-align:center; white-space:nowrap; }
+  #progressTable thead th { background:#111; position:sticky; top:0; font-size: clamp(11px,1.5vw,16px); text-transform:uppercase; letter-spacing:1px; }
+  #progressTable td:first-child, #progressTable th:first-child { position:sticky; left:0; background:#111; text-align:left; font-weight:bold; color:#0ff; }
+  #progressTable tbody tr:nth-child(even) td { background:rgba(255,255,255,0.04); }
+  #progressTable tbody tr:nth-child(even) td:first-child { background:#161616; }
+  #progressTable td.empty { color:#444; }
   #chartMessage { display:none; text-align:center; color:#888; font-size: clamp(14px,2.5vw,24px); margin-top:6vh; max-width:80%; align-self:center; }
   #chartMessage.error { color:#f44; }
-  #chartUtilRow { display:flex; gap:2vw; margin-top:1vh; }
+  #chartUtilRow { display:flex; gap:2vw; margin-top:2vh; }
   .miniBtn { background:#111; color:#0ff; border:2px solid #0ff; border-radius:10px; font-size: clamp(11px,2vw,16px); padding:1vh 3vw; }
   .miniBtn.danger { color:#f44; border-color:#f44; }
   #rawDataView { display:none; width:100%; max-width:1000px; margin:1.5vh auto 0; background:#0a0a0a; border:1px solid #333; border-radius:10px; padding:1.5vh; font-size: clamp(10px,1.8vw,14px); color:#0f0; white-space:pre-wrap; overflow-y:auto; max-height:20vh; font-family:monospace; }
+
+  #toast {
+    position:fixed; bottom:4vh; left:50%; transform:translateX(-50%);
+    background:#0f0; color:#000; font-weight:bold; font-size: clamp(14px,2.8vw,24px);
+    padding:1.5vh 5vw; border-radius:12px; z-index:30; opacity:0; pointer-events:none;
+    transition: opacity 0.25s;
+  }
+  #toast.show { opacity:1; }
 
   #exerciseNote { font-size: clamp(12px, 2.2vw, 20px); color:#f80; text-align:center; margin-top:1vh; max-width:80%; }
 
@@ -104,7 +117,7 @@
     <button class="backBtn" onclick="goMenu()">← Menú</button>
     <h2 style="font-size: clamp(20px,4vw,36px); margin-bottom:2vh; color:#0ff;">PROGRESO</h2>
     <div id="chartMessage"></div>
-    <div id="chartContainer"><canvas id="chartCanvas"></canvas></div>
+    <div id="tableWrap"><table id="progressTable"></table></div>
     <div id="chartUtilRow">
       <button class="miniBtn" onclick="toggleRawData()">🔍 Ver datos guardados</button>
       <button class="miniBtn danger" onclick="clearHistory()">🗑 Borrar historial</button>
@@ -130,6 +143,7 @@
     </div>
     <button id="numpadDone" onclick="closeNumpad()">LISTO</button>
   </div>
+  <div id="toast"></div>
 
 </div>
 
@@ -221,10 +235,20 @@ function beep(times=3){
   if(navigator.vibrate) navigator.vibrate([200,100,200,100,200]);
 }
 
+let toastTimeout = null;
+function showToast(text){
+  const t = el('toast');
+  t.textContent = text;
+  t.classList.add('show');
+  if(toastTimeout) clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(()=> t.classList.remove('show'), 1600);
+}
+
 function saveLog(exercise, reps){
   const logs = JSON.parse(localStorage.getItem('workoutLogs')||'[]');
   logs.push({date: new Date().toISOString().slice(0,10), exercise, reps});
   localStorage.setItem('workoutLogs', JSON.stringify(logs));
+  showToast('✓ Guardado: ' + exercise + ' = ' + reps);
 }
 
 function startWorkout(){
@@ -342,11 +366,10 @@ function goMenu(){
   showScreen('menuScreen');
 }
 
-/* ---- Progreso: un solo gráfico, 5 líneas de colores ---- */
-let chartInstance = null;
+/* ---- Progreso: tabla simple, ejercicios en columnas, días en filas ---- */
 function showProgress(){
   showScreen('chartScreen');
-  renderChart();
+  renderTable();
 }
 
 function setChartMessage(text, isError){
@@ -356,74 +379,58 @@ function setChartMessage(text, isError){
   msg.style.display = text ? 'block' : 'none';
 }
 
-function renderChart(){
-  const canvas = el('chartCanvas');
+function formatDateShort(iso){
+  // 2026-07-31 -> 31/07/2026
+  const [y,m,d] = iso.split('-');
+  return d + '/' + m + '/' + y;
+}
 
-  // Si Chart.js no cargó (archivo faltante, red, bloqueador), no truena todo el script: avisa y sale.
-  if(typeof Chart === 'undefined'){
-    canvas.style.display = 'none';
-    setChartMessage('No se pudo cargar la librería de gráficos (chart.min.js). Verifica que el archivo esté subido junto a index.html en el repositorio.', true);
-    return;
-  }
+function renderTable(){
+  const table = el('progressTable');
+  const wrap = el('tableWrap');
 
   let logs = [];
   try{
     logs = JSON.parse(localStorage.getItem('workoutLogs')||'[]');
   }catch(e){
-    canvas.style.display = 'none';
+    wrap.style.display = 'none';
     setChartMessage('No se pudo leer el progreso guardado en este dispositivo.', true);
     return;
   }
 
   if(logs.length === 0){
-    canvas.style.display = 'none';
+    wrap.style.display = 'none';
     setChartMessage('Aún no hay datos. Completa tu primera rutina para empezar a ver tu progreso aquí.', false);
     return;
   }
 
-  canvas.style.display = 'block';
+  wrap.style.display = 'block';
   setChartMessage('', false);
 
   const exercises = Object.keys(CHART_COLORS);
-  const allDates = [...new Set(logs.map(l=>l.date))].sort();
+  // Fecha más reciente primero, para ver de una lo que acabas de hacer arriba de todo.
+  const allDates = [...new Set(logs.map(l=>l.date))].sort().reverse();
 
-  const datasets = exercises.map(ex => {
-    const points = allDates.map(date => {
+  let html = '<thead><tr><th>Fecha</th>';
+  exercises.forEach(ex => { html += '<th style="border-bottom:3px solid ' + CHART_COLORS[ex] + '">' + ex + '</th>'; });
+  html += '</tr></thead><tbody>';
+
+  allDates.forEach(date => {
+    html += '<tr><td>' + formatDateShort(date) + '</td>';
+    exercises.forEach(ex => {
       const entries = logs.filter(l => l.date === date && l.exercise === ex);
-      if(entries.length === 0) return null;
-      return entries.reduce((sum, e) => sum + (e.reps||0), 0);
-    });
-    return {
-      label: ex,
-      data: points,
-      borderColor: CHART_COLORS[ex],
-      backgroundColor: CHART_COLORS[ex],
-      spanGaps: true,
-      tension: 0.2,
-      pointRadius: 4
-    };
-  });
-
-  try{
-    const ctx = canvas.getContext('2d');
-    if(chartInstance) chartInstance.destroy();
-    chartInstance = new Chart(ctx, {
-      type:'line',
-      data:{ labels: allDates, datasets },
-      options:{
-        responsive:true,
-        maintainAspectRatio:false,
-        scales:{
-          y:{ min:0, max:70, ticks:{color:'#fff', stepSize:10}, grid:{color:'rgba(255,255,255,0.15)'} },
-          x:{ ticks:{color:'#fff'}, grid:{color:'rgba(255,255,255,0.15)'} }
-        },
-        plugins:{ legend:{ labels:{color:'#fff'} } }
+      if(entries.length === 0){
+        html += '<td class="empty">—</td>';
+      } else {
+        const total = entries.reduce((sum, e) => sum + (e.reps||0), 0);
+        html += '<td>' + total + '</td>';
       }
     });
-  }catch(e){
-    canvas.style.display = 'none';
-    setChartMessage('Ocurrió un error al dibujar el gráfico: ' + e.message, true);
-  }
+    html += '</tr>';
+  });
+
+  html += '</tbody>';
+  table.innerHTML = html;
 }
 
 function toggleRawData(){
@@ -441,7 +448,7 @@ function clearHistory(){
   if(!confirm('¿Borrar todo el historial de progreso? Esta acción no se puede deshacer.')) return;
   localStorage.removeItem('workoutLogs');
   el('rawDataView').style.display = 'none';
-  renderChart();
+  renderTable();
 }
 
 /* ---- Service worker: caché offline para uso como PWA/APK ---- */
