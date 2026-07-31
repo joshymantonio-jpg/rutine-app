@@ -40,10 +40,14 @@
   #totalTimer { position:fixed; top:15px; left:20px; font-size: clamp(12px,2.5vw,22px); color:#0f0; text-align:left; }
 
   #chartScreen { flex-direction:column; padding:20px; justify-content:flex-start; }
-  #chartContainer { position:relative; width:100%; max-width:1000px; height:60vh; margin: 0 auto; }
+  #chartContainer { position:relative; width:100%; max-width:1000px; height:70vh; margin: 0 auto; }
   #chartCanvas { width:100% !important; height:100% !important; }
   #chartMessage { display:none; text-align:center; color:#888; font-size: clamp(14px,2.5vw,24px); margin-top:6vh; max-width:80%; align-self:center; }
   #chartMessage.error { color:#f44; }
+  #chartUtilRow { display:flex; gap:2vw; margin-top:1vh; }
+  .miniBtn { background:#111; color:#0ff; border:2px solid #0ff; border-radius:10px; font-size: clamp(11px,2vw,16px); padding:1vh 3vw; }
+  .miniBtn.danger { color:#f44; border-color:#f44; }
+  #rawDataView { display:none; width:100%; max-width:1000px; margin:1.5vh auto 0; background:#0a0a0a; border:1px solid #333; border-radius:10px; padding:1.5vh; font-size: clamp(10px,1.8vw,14px); color:#0f0; white-space:pre-wrap; overflow-y:auto; max-height:20vh; font-family:monospace; }
 
   #exerciseNote { font-size: clamp(12px, 2.2vw, 20px); color:#f80; text-align:center; margin-top:1vh; max-width:80%; }
 
@@ -101,6 +105,11 @@
     <h2 style="font-size: clamp(20px,4vw,36px); margin-bottom:2vh; color:#0ff;">PROGRESO</h2>
     <div id="chartMessage"></div>
     <div id="chartContainer"><canvas id="chartCanvas"></canvas></div>
+    <div id="chartUtilRow">
+      <button class="miniBtn" onclick="toggleRawData()">🔍 Ver datos guardados</button>
+      <button class="miniBtn danger" onclick="clearHistory()">🗑 Borrar historial</button>
+    </div>
+    <pre id="rawDataView"></pre>
   </div>
 
   <div id="numpadOverlay">
@@ -186,8 +195,18 @@ document.addEventListener('visibilitychange', async ()=>{
   if(wakeLock !== null && document.visibilityState === 'visible'){ await requestWakeLock(); }
 });
 
+function unlockAudio(){
+  if(!audioCtx){
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  }
+  if(audioCtx.state === 'suspended'){
+    audioCtx.resume();
+  }
+}
+
 function beep(times=3){
   if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  if(audioCtx.state === 'suspended'){ audioCtx.resume(); }
   let t = audioCtx.currentTime;
   for(let i=0;i<times;i++){
     const osc = audioCtx.createOscillator();
@@ -209,6 +228,7 @@ function saveLog(exercise, reps){
 }
 
 function startWorkout(){
+  unlockAudio();
   requestWakeLock();
   stepIndex = 0;
   showScreen('workoutScreen');
@@ -369,8 +389,9 @@ function renderChart(){
 
   const datasets = exercises.map(ex => {
     const points = allDates.map(date => {
-      const entry = logs.find(l => l.date === date && l.exercise === ex);
-      return entry ? entry.reps : null;
+      const entries = logs.filter(l => l.date === date && l.exercise === ex);
+      if(entries.length === 0) return null;
+      return entries.reduce((sum, e) => sum + (e.reps||0), 0);
     });
     return {
       label: ex,
@@ -393,7 +414,7 @@ function renderChart(){
         responsive:true,
         maintainAspectRatio:false,
         scales:{
-          y:{ beginAtZero:true, ticks:{color:'#fff'}, grid:{color:'rgba(255,255,255,0.15)'} },
+          y:{ min:0, max:70, ticks:{color:'#fff', stepSize:10}, grid:{color:'rgba(255,255,255,0.15)'} },
           x:{ ticks:{color:'#fff'}, grid:{color:'rgba(255,255,255,0.15)'} }
         },
         plugins:{ legend:{ labels:{color:'#fff'} } }
@@ -403,6 +424,24 @@ function renderChart(){
     canvas.style.display = 'none';
     setChartMessage('Ocurrió un error al dibujar el gráfico: ' + e.message, true);
   }
+}
+
+function toggleRawData(){
+  const view = el('rawDataView');
+  if(view.style.display === 'block'){
+    view.style.display = 'none';
+    return;
+  }
+  const logs = JSON.parse(localStorage.getItem('workoutLogs')||'[]');
+  view.textContent = logs.length ? JSON.stringify(logs, null, 2) : '(sin registros guardados)';
+  view.style.display = 'block';
+}
+
+function clearHistory(){
+  if(!confirm('¿Borrar todo el historial de progreso? Esta acción no se puede deshacer.')) return;
+  localStorage.removeItem('workoutLogs');
+  el('rawDataView').style.display = 'none';
+  renderChart();
 }
 
 /* ---- Service worker: caché offline para uso como PWA/APK ---- */
