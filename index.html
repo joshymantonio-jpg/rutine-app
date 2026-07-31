@@ -4,8 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>Rutina</title>
-<link rel="manifest" href="data:application/manifest+json,{&quot;name&quot;:&quot;Rutina&quot;,&quot;short_name&quot;:&quot;Rutina&quot;,&quot;start_url&quot;:&quot;.&quot;,&quot;display&quot;:&quot;fullscreen&quot;,&quot;background_color&quot;:&quot;%23000000&quot;,&quot;theme_color&quot;:&quot;%23000000&quot;,&quot;orientation&quot;:&quot;landscape&quot;}">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<script src="chart.min.js"></script>
 <style>
   * { box-sizing: border-box; margin:0; padding:0; -webkit-tap-highlight-color: transparent; user-select:none; }
   html, body { height:100%; background:#000; color:#fff; font-family: 'Segoe UI', Arial, sans-serif; overflow:hidden; }
@@ -35,11 +36,14 @@
   #nextBtn:active { background:#0f5; }
 
   #progressBar { position:fixed; top:0; left:0; height:8px; background:#0f0; width:0%; transition: width 0.3s linear; z-index:5; }
-  #stepCounter { position:fixed; top:15px; right:20px; font-size: clamp(12px,2.5vw,22px); color:#666; }
+  #stepCounter { position:fixed; top:15px; right:20px; font-size: clamp(12px,2.5vw,22px); color:#666; text-align:right; }
+  #totalTimer { position:fixed; top:15px; left:20px; font-size: clamp(12px,2.5vw,22px); color:#0f0; text-align:left; }
 
   #chartScreen { flex-direction:column; padding:20px; justify-content:flex-start; }
   #chartContainer { position:relative; width:100%; max-width:1000px; height:60vh; margin: 0 auto; }
   #chartCanvas { width:100% !important; height:100% !important; }
+  #chartMessage { display:none; text-align:center; color:#888; font-size: clamp(14px,2.5vw,24px); margin-top:6vh; max-width:80%; align-self:center; }
+  #chartMessage.error { color:#f44; }
 
   #exerciseNote { font-size: clamp(12px, 2.2vw, 20px); color:#f80; text-align:center; margin-top:1vh; max-width:80%; }
 
@@ -69,6 +73,7 @@
 
   <div id="progressBar"></div>
   <div id="stepCounter"></div>
+  <div id="totalTimer"></div>
 
   <div class="screen active" id="menuScreen">
     <h1 style="font-size: clamp(30px,6vw,60px); color:#0f0; margin-bottom:5vh;">RUTINA</h1>
@@ -87,12 +92,14 @@
 
   <div class="screen" id="doneScreen">
     <h1 style="font-size: clamp(30px,7vw,70px); color:#0f0;">🎉 RUTINA COMPLETA</h1>
+    <p id="doneTotalTime" style="font-size: clamp(18px,4vw,32px); color:#0ff; margin-top:2vh;"></p>
     <button class="bigBtn" onclick="goMenu()" style="margin-top:5vh;">MENÚ</button>
   </div>
 
   <div class="screen" id="chartScreen">
     <button class="backBtn" onclick="goMenu()">← Menú</button>
     <h2 style="font-size: clamp(20px,4vw,36px); margin-bottom:2vh; color:#0ff;">PROGRESO</h2>
+    <div id="chartMessage"></div>
     <div id="chartContainer"><canvas id="chartCanvas"></canvas></div>
   </div>
 
@@ -161,6 +168,8 @@ let timerInterval = null;
 let currentReps = 0;
 let wakeLock = null;
 let audioCtx = null;
+let totalStartTime = null;
+let totalTimerInterval = null;
 
 const el = id => document.getElementById(id);
 
@@ -204,6 +213,22 @@ function startWorkout(){
   stepIndex = 0;
   showScreen('workoutScreen');
   runStep();
+
+  totalStartTime = Date.now();
+  if(totalTimerInterval) clearInterval(totalTimerInterval);
+  updateTotalTimer();
+  totalTimerInterval = setInterval(updateTotalTimer, 1000);
+}
+
+function formatTotal(s){
+  const m = Math.floor(s/60);
+  const sec = s%60;
+  return m + ':' + String(sec).padStart(2,'0');
+}
+
+function updateTotalTimer(){
+  const elapsed = Math.floor((Date.now() - totalStartTime)/1000);
+  el('totalTimer').textContent = '⏱ ' + formatTotal(elapsed);
 }
 
 function updateProgressBar(){
@@ -278,6 +303,10 @@ function nextStep(){
   if(step.type === 'reps'){ saveLog(step.name, currentReps); }
   stepIndex++;
   if(stepIndex >= routine.length){
+    if(totalTimerInterval){ clearInterval(totalTimerInterval); totalTimerInterval = null; }
+    const elapsedFinal = totalStartTime ? Math.floor((Date.now() - totalStartTime)/1000) : 0;
+    el('doneTotalTime').textContent = 'Tiempo total: ' + formatTotal(elapsedFinal);
+    el('totalTimer').textContent = '';
     showScreen('doneScreen');
     if(wakeLock){ wakeLock.release(); wakeLock = null; }
   } else {
@@ -287,6 +316,8 @@ function nextStep(){
 
 function goMenu(){
   if(timerInterval) clearInterval(timerInterval);
+  if(totalTimerInterval){ clearInterval(totalTimerInterval); totalTimerInterval = null; }
+  el('totalTimer').textContent = '';
   if(wakeLock){ wakeLock.release(); wakeLock = null; }
   showScreen('menuScreen');
 }
@@ -298,8 +329,41 @@ function showProgress(){
   renderChart();
 }
 
+function setChartMessage(text, isError){
+  const msg = el('chartMessage');
+  msg.textContent = text;
+  msg.className = isError ? 'error' : '';
+  msg.style.display = text ? 'block' : 'none';
+}
+
 function renderChart(){
-  const logs = JSON.parse(localStorage.getItem('workoutLogs')||'[]');
+  const canvas = el('chartCanvas');
+
+  // Si Chart.js no cargó (archivo faltante, red, bloqueador), no truena todo el script: avisa y sale.
+  if(typeof Chart === 'undefined'){
+    canvas.style.display = 'none';
+    setChartMessage('No se pudo cargar la librería de gráficos (chart.min.js). Verifica que el archivo esté subido junto a index.html en el repositorio.', true);
+    return;
+  }
+
+  let logs = [];
+  try{
+    logs = JSON.parse(localStorage.getItem('workoutLogs')||'[]');
+  }catch(e){
+    canvas.style.display = 'none';
+    setChartMessage('No se pudo leer el progreso guardado en este dispositivo.', true);
+    return;
+  }
+
+  if(logs.length === 0){
+    canvas.style.display = 'none';
+    setChartMessage('Aún no hay datos. Completa tu primera rutina para empezar a ver tu progreso aquí.', false);
+    return;
+  }
+
+  canvas.style.display = 'block';
+  setChartMessage('', false);
+
   const exercises = Object.keys(CHART_COLORS);
   const allDates = [...new Set(logs.map(l=>l.date))].sort();
 
@@ -319,17 +383,32 @@ function renderChart(){
     };
   });
 
-  const ctx = el('chartCanvas').getContext('2d');
-  if(chartInstance) chartInstance.destroy();
-  chartInstance = new Chart(ctx, {
-    type:'line',
-    data:{ labels: allDates, datasets },
-    options:{
-      responsive:true,
-      maintainAspectRatio:false,
-      scales:{ y:{ beginAtZero:true, ticks:{color:'#fff'} }, x:{ ticks:{color:'#fff'} } },
-      plugins:{ legend:{ labels:{color:'#fff'} } }
-    }
+  try{
+    const ctx = canvas.getContext('2d');
+    if(chartInstance) chartInstance.destroy();
+    chartInstance = new Chart(ctx, {
+      type:'line',
+      data:{ labels: allDates, datasets },
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        scales:{
+          y:{ beginAtZero:true, ticks:{color:'#fff'}, grid:{color:'rgba(255,255,255,0.15)'} },
+          x:{ ticks:{color:'#fff'}, grid:{color:'rgba(255,255,255,0.15)'} }
+        },
+        plugins:{ legend:{ labels:{color:'#fff'} } }
+      }
+    });
+  }catch(e){
+    canvas.style.display = 'none';
+    setChartMessage('Ocurrió un error al dibujar el gráfico: ' + e.message, true);
+  }
+}
+
+/* ---- Service worker: caché offline para uso como PWA/APK ---- */
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch(e => console.log('SW no registrado:', e));
   });
 }
 </script>
