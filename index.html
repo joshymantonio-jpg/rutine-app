@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Rutina</title>
+<link rel="manifest" href="data:application/manifest+json,{&quot;name&quot;:&quot;Rutina&quot;,&quot;short_name&quot;:&quot;Rutina&quot;,&quot;start_url&quot;:&quot;.&quot;,&quot;display&quot;:&quot;fullscreen&quot;,&quot;background_color&quot;:&quot;%23000000&quot;,&quot;theme_color&quot;:&quot;%23000000&quot;,&quot;orientation&quot;:&quot;landscape&quot;}">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin:0; padding:0; -webkit-tap-highlight-color: transparent; user-select:none; }
+  html, body { height:100%; background:#000; color:#fff; font-family: 'Segoe UI', Arial, sans-serif; overflow:hidden; }
+  #app { height:100vh; width:100vw; display:flex; flex-direction:column; }
+
+  /* ---- Pantalla principal de menu ---- */
+  .screen { flex:1; display:none; flex-direction:column; align-items:center; justify-content:center; height:100%; padding:20px; }
+  .screen.active { display:flex; }
+
+  .bigBtn {
+    background:#111; color:#0f0; border:4px solid #0f0; border-radius:20px;
+    font-size:4vw; padding:2vh 4vw; margin:1.5vh 0; width:80%; max-width:600px;
+    cursor:pointer;
+  }
+  .bigBtn:active { background:#0f0; color:#000; }
+
+  /* ---- Pantalla de entrenamiento ---- */
+  #exerciseName { font-size:6vw; text-align:center; text-transform:uppercase; letter-spacing:2px; margin-bottom:2vh; color:#0ff; }
+  #targetLabel { font-size:3vw; color:#888; margin-bottom:1vh; }
+  #bigNumber { font-size:22vw; font-weight:bold; line-height:1; }
+  #bigNumber.time { color:#0ff; }
+  #bigNumber.reps { color:#ff0; }
+
+  .repsControls { display:flex; align-items:center; gap:4vw; margin:3vh 0; }
+  .repBtn {
+    background:#222; color:#fff; border:4px solid #555; border-radius:50%;
+    width:15vw; height:15vw; max-width:120px; max-height:120px; font-size:6vw;
+  }
+  .repBtn:active { background:#555; }
+
+  #nextBtn {
+    background:#0a0; color:#000; font-size:5vw; font-weight:bold;
+    border:none; border-radius:20px; padding:3vh 8vw; margin-top:3vh; width:90%; max-width:700px;
+  }
+  #nextBtn:active { background:#0f5; }
+
+  #progressBar { position:fixed; top:0; left:0; height:8px; background:#0f0; width:0%; transition: width 0.3s linear; }
+  #stepCounter { position:fixed; top:15px; right:20px; font-size:2.5vw; color:#666; }
+
+  #chartScreen { flex-direction:column; padding:20px; }
+  #exerciseSelect { font-size:3vw; padding:10px; margin-bottom:20px; background:#111; color:#0f0; border:2px solid #0f0; }
+  #chartCanvas { width:100%; max-width:900px; }
+
+  .backBtn { position:fixed; top:15px; left:20px; font-size:2.5vw; color:#0ff; background:none; border:2px solid #0ff; border-radius:10px; padding:5px 15px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="progressBar"></div>
+  <div id="stepCounter"></div>
+
+  <!-- MENU -->
+  <div class="screen active" id="menuScreen">
+    <h1 style="font-size:6vw; color:#0f0; margin-bottom:5vh;">RUTINA</h1>
+    <button class="bigBtn" onclick="startWorkout()">▶ EMPEZAR RUTINA</button>
+    <button class="bigBtn" onclick="showProgress()">📈 VER PROGRESO</button>
+  </div>
+
+  <!-- ENTRENAMIENTO -->
+  <div class="screen" id="workoutScreen">
+    <div id="exerciseName"></div>
+    <div id="targetLabel"></div>
+    <div id="bigNumber">0</div>
+    <div class="repsControls" id="repsControls" style="display:none;">
+      <button class="repBtn" onclick="changeReps(-1)">−</button>
+      <button class="repBtn" onclick="changeReps(1)">+</button>
+    </div>
+    <button id="nextBtn" onclick="nextStep()">SIGUIENTE ➜</button>
+  </div>
+
+  <!-- FIN -->
+  <div class="screen" id="doneScreen">
+    <h1 style="font-size:7vw; color:#0f0;">🎉 RUTINA COMPLETA</h1>
+    <button class="bigBtn" onclick="goMenu()" style="margin-top:5vh;">MENÚ</button>
+  </div>
+
+  <!-- PROGRESO -->
+  <div class="screen" id="chartScreen">
+    <button class="backBtn" onclick="goMenu()">← Menú</button>
+    <h2 style="font-size:4vw; margin-bottom:2vh; color:#0ff;">PROGRESO</h2>
+    <select id="exerciseSelect" onchange="renderChart()"></select>
+    <canvas id="chartCanvas" height="300"></canvas>
+  </div>
+
+</div>
+
+<script>
+/* ================= RUTINA ================= */
+const routine = [
+  {type:'time', name:'Caminata', duration:300},
+  {type:'reps', name:'Flexiones al fallo'},
+  {type:'reps', name:'Sentadillas', target:15},
+  {type:'time', name:'Caminar', duration:30},
+  {type:'reps', name:'Flexiones al fallo'},
+  {type:'time', name:'Plancha', duration:20},
+  {type:'reps', name:'Zancadas', target:'10 por pierna'},
+  {type:'time', name:'Mountain Climbers', duration:30},
+  {type:'time', name:'Descanso', duration:60},
+  {type:'reps', name:'Burpees', target:5},
+  {type:'reps', name:'Bear Crawl', target:'10 pasos'},
+  {type:'time', name:'Silla Invisible', duration:45},
+  {type:'time', name:'Caminar', duration:180},
+];
+
+let stepIndex = 0;
+let timerInterval = null;
+let currentReps = 0;
+let wakeLock = null;
+let audioCtx = null;
+
+const el = id => document.getElementById(id);
+
+function showScreen(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  el(id).classList.add('active');
+}
+
+/* ---- Wake Lock: pantalla siempre encendida ---- */
+async function requestWakeLock(){
+  try{
+    if('wakeLock' in navigator){
+      wakeLock = await navigator.wakeLock.request('screen');
+    }
+  }catch(e){ console.log('WakeLock error', e); }
+}
+document.addEventListener('visibilitychange', async ()=>{
+  if(wakeLock !== null && document.visibilityState === 'visible'){
+    await requestWakeLock();
+  }
+});
+
+/* ---- Beep sonoro al terminar tiempo ---- */
+function beep(times=3){
+  if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  let t = audioCtx.currentTime;
+  for(let i=0;i<times;i++){
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.3, t + i*0.35);
+    osc.start(t + i*0.35);
+    osc.stop(t + i*0.35 + 0.25);
+  }
+  if(navigator.vibrate) navigator.vibrate([200,100,200,100,200]);
+}
+
+/* ---- Base de datos local (localStorage) ---- */
+function saveLog(exercise, reps){
+  const logs = JSON.parse(localStorage.getItem('workoutLogs')||'[]');
+  logs.push({date: new Date().toISOString().slice(0,10), exercise, reps});
+  localStorage.setItem('workoutLogs', JSON.stringify(logs));
+}
+
+/* ---- Máquina de estados ---- */
+function startWorkout(){
+  requestWakeLock();
+  stepIndex = 0;
+  showScreen('workoutScreen');
+  runStep();
+}
+
+function updateProgressBar(){
+  el('progressBar').style.width = ((stepIndex)/routine.length*100)+'%';
+  el('stepCounter').textContent = (stepIndex+1)+' / '+routine.length;
+}
+
+function runStep(){
+  if(timerInterval) clearInterval(timerInterval);
+  const step = routine[stepIndex];
+  updateProgressBar();
+  el('exerciseName').textContent = step.name;
+  const bigNum = el('bigNumber');
+
+  if(step.type === 'time'){
+    el('targetLabel').textContent = 'TIEMPO';
+    el('repsControls').style.display = 'none';
+    bigNum.className = 'time';
+    let remaining = step.duration;
+    bigNum.textContent = formatTime(remaining);
+    el('nextBtn').textContent = 'SALTAR ➜';
+    timerInterval = setInterval(()=>{
+      remaining--;
+      bigNum.textContent = formatTime(remaining);
+      if(remaining <= 0){
+        clearInterval(timerInterval);
+        beep();
+        nextStep();
+      }
+    }, 1000);
+  } else {
+    el('targetLabel').textContent = step.target ? ('OBJETIVO: '+step.target) : 'AL FALLO';
+    el('repsControls').style.display = 'flex';
+    bigNum.className = 'reps';
+    currentReps = (typeof step.target === 'number') ? step.target : 0;
+    bigNum.textContent = currentReps;
+    el('nextBtn').textContent = 'GUARDAR Y SIGUIENTE ➜';
+  }
+}
+
+function formatTime(s){
+  const m = Math.floor(s/60);
+  const sec = s%60;
+  return (m>0 ? m+':'+String(sec).padStart(2,'0') : sec);
+}
+
+function changeReps(delta){
+  currentReps = Math.max(0, currentReps+delta);
+  el('bigNumber').textContent = currentReps;
+}
+
+function nextStep(){
+  if(timerInterval) clearInterval(timerInterval);
+  const step = routine[stepIndex];
+  if(step.type === 'reps'){
+    saveLog(step.name, currentReps);
+  }
+  stepIndex++;
+  if(stepIndex >= routine.length){
+    showScreen('doneScreen');
+    if(wakeLock){ wakeLock.release(); wakeLock = null; }
+  } else {
+    runStep();
+  }
+}
+
+function goMenu(){
+  if(timerInterval) clearInterval(timerInterval);
+  if(wakeLock){ wakeLock.release(); wakeLock = null; }
+  showScreen('menuScreen');
+}
+
+/* ---- Progreso / Gráfico ---- */
+let chartInstance = null;
+function showProgress(){
+  showScreen('chartScreen');
+  const logs = JSON.parse(localStorage.getItem('workoutLogs')||'[]');
+  const exercises = [...new Set(logs.map(l=>l.exercise))];
+  const select = el('exerciseSelect');
+  select.innerHTML = exercises.map(e=>`<option value="${e}">${e}</option>`).join('');
+  renderChart();
+}
+
+function renderChart(){
+  const logs = JSON.parse(localStorage.getItem('workoutLogs')||'[]');
+  const exercise = el('exerciseSelect').value;
+  const filtered = logs.filter(l=>l.exercise===exercise);
+  const ctx = el('chartCanvas').getContext('2d');
+  if(chartInstance) chartInstance.destroy();
+  chartInstance = new Chart(ctx, {
+    type:'line',
+    data:{
+      labels: filtered.map(l=>l.date),
+      datasets:[{
+        label: exercise,
+        data: filtered.map(l=>l.reps),
+        borderColor:'#0f0',
+        backgroundColor:'rgba(0,255,0,0.1)',
+        tension:0.2,
+        pointRadius:5
+      }]
+    },
+    options:{
+      scales:{ y:{ beginAtZero:true, ticks:{color:'#fff'} }, x:{ ticks:{color:'#fff'} } },
+      plugins:{ legend:{ labels:{color:'#fff'} } }
+    }
+  });
+}
+</script>
+</body>
+</html>
